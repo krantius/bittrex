@@ -2,9 +2,15 @@ package main
 
 import (
 	"flag"
-	"github.com/gorilla/websocket"
-	"net/http"
 	"log"
+	"net/http"
+
+	"encoding/json"
+	"fmt"
+
+	"os"
+
+	"github.com/gorilla/websocket"
 )
 
 var addr = flag.String("addr", "localhost:8080", "http service address")
@@ -19,17 +25,38 @@ func echo(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.Close()
 	for {
-		mt, message, err := c.ReadMessage()
+		_, message, err := c.ReadMessage()
 		if err != nil {
 			log.Println("read:", err)
 			break
 		}
-		log.Printf("recv: %s", message)
 
-		str := string(message)
-		str += " hi"
+		var tradeUpdate TradeUpdate
+		if err := json.Unmarshal(message, &tradeUpdate); err != nil {
+			fmt.Printf("error: %v\n", err)
+			break
+		}
 
-		err = c.WriteMessage(mt, []byte(str))
+		f, err := os.OpenFile("./output.txt", os.O_APPEND|os.O_WRONLY, os.ModeAppend)
+		if err != nil {
+			fmt.Printf("error opening file: %v\n", err)
+			break
+		}
+
+		for _, trade := range tradeUpdate.Data {
+			if trade.Price < 1 {
+				continue
+			}
+
+			output := fmt.Sprintf("%v %s with %s order %v\n", trade.Timestamp, tradeUpdate.Pair, trade.OrderType, trade.Price)
+
+			if _, err := f.WriteString(output); err != nil {
+				fmt.Printf("error writing to file: %v\n", err)
+			}
+		}
+
+		f.Close()
+
 		if err != nil {
 			log.Println("write:", err)
 			break
@@ -37,7 +64,26 @@ func echo(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type TradeUpdate struct {
+	Pair string
+	Data []TradeData
+}
+
+type TradeData struct {
+	Id        int
+	Quantity  float32
+	Rate      float32
+	Price     float32
+	OrderType string
+	Timestamp float32
+}
+
 func main() {
+	_, err := os.Create("./output.txt")
+	if err != nil {
+		fmt.Printf("failed to create output file: %v\n", err)
+	}
+
 	flag.Parse()
 	log.SetFlags(0)
 	http.HandleFunc("/ws", echo)
