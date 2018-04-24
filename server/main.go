@@ -33,20 +33,18 @@ func echo(w http.ResponseWriter, r *http.Request) {
 
 		var tradeUpdate TradeUpdate
 		if err := json.Unmarshal(message, &tradeUpdate); err != nil {
-			fmt.Printf("error: %v\n", err)
-			break
+			fmt.Printf("error unmarshalling trade update: %v\n", err)
 		}
 
 		f, err := os.OpenFile("./output.txt", os.O_APPEND|os.O_WRONLY, os.ModeAppend)
 		if err != nil {
 			fmt.Printf("error opening file: %v\n", err)
-			break
 		}
 
 		for _, trade := range tradeUpdate.Data {
-			if trade.Price < 1 {
+			/*if trade.Price < 1 {
 				continue
-			}
+			}*/
 
 			output := fmt.Sprintf("%v %s with %s order %v\n", trade.Timestamp, tradeUpdate.Pair, trade.OrderType, trade.Price)
 
@@ -65,17 +63,17 @@ func echo(w http.ResponseWriter, r *http.Request) {
 }
 
 type TradeUpdate struct {
-	Pair string
-	Data []TradeData
+	Pair string      `json:"pair"`
+	Data []TradeData `json:"data"`
 }
 
 type TradeData struct {
-	Id        int
-	Quantity  float32
-	Rate      float32
-	Price     float32
-	OrderType string
-	Timestamp float32
+	Id        int     `json"id"`
+	Quantity  float32 `json:"quantity"`
+	Rate      float32 `json"rate"`
+	Price     float32 `json:"price"`
+	OrderType string  `json:"orderType"`
+	Timestamp float32 `json:"timestamp"`
 }
 
 func main() {
