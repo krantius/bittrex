@@ -20,17 +20,15 @@ import (
 var addr = flag.String("addr", "localhost:8080", "http service address")
 var upgrader = websocket.Upgrader{} // use default options
 var tradeC = make(chan TradeData, 1000)
-var Listeners map[string]chan *TradeUpdate
+var Listeners map[string]*TradeListener
+var elasticClient *elastic.Client
 
 func main() {
-	Listeners = make(map[string]chan *TradeUpdate)
-	/*_, err := os.Create("./output.txt")
-	if err != nil {
-		fmt.Printf("failed to create output file: %v\n", err)
-	}*/
+	Listeners = make(map[string]*TradeListener)
 
 	// Make elastic client
-	_, err := elastic.NewSimpleClient(elastic.SetURL("http://192.168.1.125:9200"))
+	var err error
+	elasticClient, err = elastic.NewSimpleClient(elastic.SetURL("http://192.168.1.125:9200"))
 	if err != nil {
 		fmt.Printf("failed to create elastic client: %v\n", err)
 		return
@@ -49,11 +47,14 @@ func main() {
 	flag.Parse()
 	log.SetFlags(0)
 	http.HandleFunc("/ws", echo)
+	http.HandleFunc("/info", info)
+
+	fmt.Println("Listening for websocket requests on port 8080...")
 	log.Fatal(http.ListenAndServe(*addr, nil))
 }
 
 func echo(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("got echo!")
+	fmt.Println("Connected")
 	c, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Print("upgrade:", err)
@@ -68,22 +69,30 @@ func echo(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Unmarshal into a trade update
-		var tradeUpdate *TradeUpdate
+		tradeUpdate := &TradeUpdate{}
 		if err := json.Unmarshal(message, tradeUpdate); err != nil {
 			fmt.Printf("error unmarshalling trade update: %v\n", err)
 			continue
 		}
 
-		WriteTradeUpdateToFile(tradeUpdate)
-
 		// Send to the correct listener for processing
-		Listeners[tradeUpdate.Pair] <- tradeUpdate
+		Listeners[tradeUpdate.Pair].c <- tradeUpdate
 
 		if err != nil {
 			log.Println("write:", err)
 			break
 		}
 	}
+}
+
+func info(w http.ResponseWriter, r *http.Request) {
+	listeners, err := json.Marshal(Listeners)
+	if err != nil {
+		w.Write([]byte(fmt.Sprintf("failed to marshal json: %v", err)))
+		return
+	}
+
+	w.Write(listeners)
 }
 
 type TradeUpdate struct {
@@ -97,25 +106,7 @@ type TradeData struct {
 	Rate      float32 `json"rate"`
 	Price     float32 `json:"price"`
 	OrderType string  `json:"orderType"`
-	Timestamp float32 `json:"timestamp"`
-}
-
-func InitListeners(markets []string, m map[string]*stats.CandleStats) {
-	for _, market := range markets {
-		stats, ok := m[market]
-		if !ok {
-			fmt.Printf("Market %v did not have any stats\n", market)
-			continue
-		}
-
-		tl := &TradeListener{
-			Market: market,
-			C:      make(chan *TradeUpdate, 1000),
-			Stats:  stats,
-		}
-
-		Listeners[market] = tl.C
-	}
+	Timestamp float64 `json:"timestamp"`
 }
 
 func LoadMarkets(name string) []string {
@@ -160,10 +151,6 @@ func LoadStats() map[string]*stats.CandleStats {
 			continue
 		}
 		m[candleStat.Market] = candleStat
-	}
-
-	for _, v := range m {
-		fmt.Printf("%+v\n", *v)
 	}
 
 	return m
